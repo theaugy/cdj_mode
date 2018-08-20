@@ -87,8 +87,10 @@ function cdj_done {
             ( set -x; sox "$cdj_current_track_wav" /tmp/cdj_current_split.wav trim ${split}; )
         fi
 
+        local split_formatted=$(printf "%06.2f" ${split})
+
         for target_dir in $(echo "$cdj_target_dir" | tr ',' '\n'); do
-            cp -v /tmp/cdj_current_split.wav "${target_dir}/manual/${filename_root} [${split}].wav"
+            cp -v /tmp/cdj_current_split.wav "${target_dir}/manual/${filename_root} [${split_formatted}].wav"
         done
 
         i=$next_split

@@ -1,0 +1,133 @@
+#!/bin/bash
+
+export cdj_target_dir=/mnt/rb3,/mnt/rb4
+export cdj_current_track=
+export cdj_current_bpm=
+export cdj_current_splits=
+export cdj_current_scrub=
+export cdj_split_preview_length=1
+cdj_current_track_wav=/tmp/cdj_mode_current_track.wav
+
+function _cdj_ensure_current_track {
+    [ -z "$cdj_current_track" ] && echo "No current track" && return 1
+    return 0
+}
+
+function _cdj_ensure_current_bpm {
+    [ -z "$cdj_current_bpm" ] && echo "No bpm set" && return 1
+    return 0
+}
+
+function _cdj_preview_at {
+    local seconds_offset=$1
+    local seconds_duration=$2
+    sox -q "$cdj_current_track_wav" -d trim "$seconds_offset" "$seconds_duration" &> /dev/null
+}
+
+function _cdj_does_target_exist_in_dir {
+    local target_dir="$1"
+    local file_name="$2"
+    if (( $(find "$target_dir" -name "*${file_name}*" | wc -l) > 0)); then
+        return 0
+    fi
+    return 1
+}
+
+function cdj_track {
+    ! [ -f "$1" ] && echo "Not a file: $1" && return 1
+    rm -f "$cdj_current_track_wav"
+    [ -e "$cdj_current_track_wav" ] && {
+        echo "Can't remove $cdj_current_track_wav. Going no further."
+        return 1
+    }
+    echo "Preparing $1..."
+    ffmpeg -i "$1" "$cdj_current_track_wav" &> /dev/null || {
+        echo "conversion to wav failed"
+        return 1
+    }
+    export cdj_current_track="$1"
+    export cdj_current_bpm=
+    export cdj_current_splits=0
+    export cdj_current_scrub=0
+}
+
+function cdj_done {
+    _cdj_ensure_current_track || return 1
+    _cdj_ensure_current_bpm || return 1
+
+    declare -a splits
+    local split
+    local i=0
+    for split in $(echo $cdj_current_splits | tr ' ' '\n' | sort -b -n | egrep -v '^\s*$'); do
+        splits[$i]=$split
+        i=$(($i + 1))
+    done
+
+    local current_track_filename="${cdj_current_track##*/}"
+    local filename_root="$(printf "%06.2f_%s" $cdj_current_bpm "${current_track_filename%.*}")"
+    local target_dir
+
+    # before doing anything, check if it looks like this track is already in either target dir
+    for target_dir in $(echo "$cdj_target_dir" | tr ',' '\n'); do
+        if _cdj_does_target_exist_in_dir "$target_dir" "$current_track_filename"; then
+            echo "Found $current_track_filename in "$target_dir". Stopping now to avoid screwing things up."
+            return 1
+        fi
+    done
+
+    local next_split;
+    i=0
+    while (($i < ${#splits[*]})); do
+
+        split=${splits[$i]}
+        next_split=$(( $i + 1 ))
+        if (( $next_split < ${#splits[*]})); then
+            ( set -x; sox "$cdj_current_track_wav" /tmp/cdj_current_split.wav trim ${split} =${splits[$next_split]}; )
+        else
+            ( set -x; sox "$cdj_current_track_wav" /tmp/cdj_current_split.wav trim ${split}; )
+        fi
+
+        for target_dir in $(echo "$cdj_target_dir" | tr ',' '\n'); do
+            cp -v /tmp/cdj_current_split.wav "${target_dir}/manual/${filename_root} [${split}].wav"
+        done
+
+        i=$next_split
+    done
+}
+
+function cdj_split {
+    [[ "$cdj_current_splits" == '* $cdj_current_scrub *' ]] && {
+        echo "There is already a split at this location. Splits: $cdj_current_splits"
+        return 1
+    }
+    cdj_current_splits="${cdj_current_splits} $cdj_current_scrub "
+}
+
+function cdj_split_preview {
+    _cdj_ensure_current_track || return 1
+    local split;
+    for split in $cdj_current_splits; do
+        _cdj_preview_at $split $cdj_split_preview_length
+        sleep .3
+    done
+}
+
+function cdj_scrub {
+    _cdj_ensure_current_track || return 1
+    ! [ -z "$cdj_current_scrub" ] && cdj_current_scrub=$1
+    _cdj_preview_at $cdj_current_scrub $cdj_split_preview_length
+}
+
+function cdj_bpm {
+    [ -z "$1" ] && {
+        echo "Tap along to 5 seconds at current scrub location $cdj_current_scrub..."
+        _cdj_preview_at $cdj_current_scrub 5 &
+        timeout 5 tapbpm
+        echo "To set the tempo, do:"
+        echo "     cdj_bpm tempo"
+        return 0
+    }
+    cdj_current_bpm=$1
+}
+
+echo "CDJ MODE. Will write to $cdj_target_dir (comma-separated)"

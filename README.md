@@ -1,96 +1,103 @@
-# cdj_mode
+# Introduction
 
-## Installation
+`cdj_mode` is a set of bash functions that prepare music for DJ'ing.
+A input file (anything that can be read by ffmpeg) is converted to a wav file.
+That wav file is split into pieces.
+The bpm of the wav file is established (tap tempo or specified).
+The pieces are copied to any number of target directories.
 
-To set up a shell for cdj mode, run:
+# Intended Use Case
+
+Over many years of DJ'ing, a hard learned lesson is that there is very little you can rely on with respect to any club DJ setup.
+You cannot expect CDJs that support rekordbox. You cannot expect CDJs with hot cue buttons or particular looping features. You cannot expect that the link jacks will work.
+Hell, sometimes they aren't even Pioneers. Or it's only Serato.
+
+Having a system for organizing, prepping, and performing that is completely agnostic of any performance technology, while maintaining the most basic features a DJ needs like BPM information, cue points, and library organization, is the problem that `cdj_mode` was intended to solve.
+
+`cdj_mode` will work with any performance setup that supports:
+
+- USB media (FAT file system)
+- Gapless playback
+
+This is known to include CDJs (turn off autocue), Serato, "other" brand CDJs, Traktor and Mixxx and probably any other "in the box" DJ performance software.
+
+# Prerequisites
+
+- sox
+- ffmpeg
+- [tapbpm](https://github.com/theaugy/tapbpm)
+
+# Configuration
+
+`cdj_mode` will copy the prepared tracks to multiple target directories. I will plug in both of my performance USB sticks, mount them at `/mnt/rb3` and `/mnt/rb4`, and ensure that `cdj_target_dir` is `/mnt/rb3,/mnt/rb4`.
+To change these, find the line near the top of the `cdj_mode` file and update the `cdj_target_dir=` line to point at the directory or directories you want. Comma-separate multiple directories.
+
+# Workflow
+
+This is intended to be run from a bash shell. For macOS, Linux and similar operating systems, this is easy. Windows users should consider Windows Subsystem for Linux.
+
+First, put your shell into music mode:
+
 ```
 $ source path/to/cdj_mode/cdj_mode
 ```
 
-## Dependencies
-
-- bash
-- ffmpeg
-- tapbpm
-- sox
-
-## Configuration
-
-Set the comma-separated target directories with:
+Load a track (called `some_song.mp3` in this case)
 
 ```
-$ export cdj_target_dir=/mnt/usb1,/mnt/usb2
+$ cdj_track music/some_song.mp3
 ```
 
-## Usage
-
-### Select A Track
-
-cdj_mode is track-oriented. This means that you prepare one track at a time. Select the track with:
-
-```
-$ cdj_track path/to/foo.flac
-```
-
-### Set BPM
-
-Once a track has been selected with `cdj_track`, you are required to specify the bpm with `cdj_bpm`:
-
+Set the bpm (`120` in this case):
 ```
 $ cdj_bpm 120
 ```
 
-If you have `tapbpm` in your path, then you can call `cdj_bpm` with no arguments to play 5 seconds of the song in the background while `tapbpm` is running.
-
-### Set Split Points (optional)
-
-cdj_mode supports splitting the file into pieces based on split points that you specify. This is particularly handy if you use CDJs auto-cue turned *off*. The pieces will play together seamlessly, so you can achieve "cue points" by splitting the track up.
-
-cdj_mode has a "scrub point", which is modified with:
+Find your cue points by scrubbing to a point in the song (`28` seconds in this example):
 
 ```
-$ cdj_scrub 29.42
+$ cdj_scrub 28
 ```
 
-This will set the scrub point at 29.42 seconds into the track, and it will play one second of the song starting at the scrub point.
+This will play 1 second of the song starting at the offset. If you're off by a little bit, you can nudge it forward or backward by changing the offset. You can use decimal places to get it exactly right (you rarely need more than the first decimal place):
 
-By repeatedly setting the scrub point, you can zero in on the exact spot you want to split the track.
+```
+$ cdj_scrub 28.14
+```
 
-When you have found the right scrub point, you can split the track at the scrub point with:
+If you need to hear more than 1 second of context, pass the number of seconds to play as the second argument (we'll listen to `5` seconds to be sure we got it right):
+
+```
+$ cdj_scrub 28.14 5
+```
+
+
+When it sounds right, add a split:
 
 ```
 $ cdj_split
 ```
 
-At any time, you can preview all split points with:
+You can scrub anywhere else and add another split. You can add any number of splits. Don't worry about the order; when you finalize the track, your splits will always be created in chronological order.
+
+To hear all the splits you've created so far:
 
 ```
 $ cdj_split_preview
 ```
 
-Which will play all your split points in the order you created them (one second each)
-
-You can remove split points by modifying the `cdj_current_splits` environment variable directly. The format is space-separated real numbers.
-
-### Finalizing
-
-When you are finished setting the bpm and the split points, you can copy to the target directories with:
+When you're done with the track:
 
 ```
 $ cdj_done
 ```
 
-If you specified split points, you will copy one file for each split point to your target directories.
-
-Split points are included in the file name, which are in this format:
+`cdj_done` will break the track into pieces and copy it to the target directories. So if your target directory is `/mnt/cdj_usb_key`, and you created splits at `28` and `64`, and the bpm is `120`, then `cdj_done` will generate the following files:
 
 ```
-123.45_Original Filename [000.00].wav
-123.45_Original Filename [045.21].wav
+/mnt/cdj_usb_key/120.00_some_song [000].wav
+/mnt/cdj_usb_key/120.00_some_song [028].wav
+/mnt/cdj_usb_key/120.00_some_song [120].wav
 ```
 
-Where `123.45` is the BPM, `Original Filename` is the filename of the track specified with `cdj_track 'Original Filename.flac'` with extension removed, and `45.21` is the split point.
-
-### Next Track
-
-Invoking `cdj_track` will reset BPM and split points for you.
+Each piece starts at the exact offset where you put its split.

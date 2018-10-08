@@ -6,7 +6,10 @@ export cdj_current_bpm=
 export cdj_current_splits=
 export cdj_current_scrub=
 export cdj_split_preview_length=1
+export cdj_use_name=
+export cdj_bpm_time=5
 cdj_current_track_wav=/tmp/cdj_mode_current_track.wav
+cdj_current_track_spectro=/tmp/cdj_mode_current_spectro.png
 
 function _cdj_ensure_current_track {
     [ -z "$cdj_current_track" ] && echo "No current track" && return 1
@@ -45,10 +48,38 @@ function cdj_track {
         echo "conversion to wav failed"
         return 1
     }
+    echo "Generating spectrogram..."
+    sox "$cdj_current_track_wav" -n spectrogram -o "$cdj_current_track_spectro"
+    xdg-open "$cdj_current_track_spectro" &
     export cdj_current_track="$1"
     export cdj_current_bpm=
     export cdj_current_splits=0
     export cdj_current_scrub=0
+    export cdj_use_name=
+}
+
+function cdj_track_name {
+    _cdj_ensure_current_track || return 1
+    cdj_use_name="$*"
+    echo "Will use '$cdj_use_name' as the filename"
+}
+
+function cdj_name_check {
+    local current_track_filename="${cdj_current_track##*/}"
+    local bash_regex='^[0-9._\s]+'
+    if [[ $current_track_filename =~ $bash_regex ]]; then
+        # if the name starts with numbers-then-space, ask if it's metadata we should trim off.
+        local test_name="$(echo "$current_track_filename" | sed -E 's/^[0-9._ ]+//g')"
+        echo "It looks like '$current_track_filename' starts with metadata. Can we trim that to '$test_name'? (yes, no, or ctrl-c to cancel)"
+        local test_name_change_ok=
+        read test_name_change_ok
+        [ "$test_name_change_ok" == "yes" ] && {
+            cdj_use_name="$test_name"
+            return 0
+        }
+    fi
+    echo "Name is '$current_track_filename'"
+    return 1
 }
 
 function cdj_done {
@@ -64,16 +95,25 @@ function cdj_done {
     done
 
     local current_track_filename="${cdj_current_track##*/}"
+
+    if ! [ -z "$cdj_use_name" ]; then
+        current_track_filename="$cdj_use_name"
+    elif cdj_name_check; then
+        current_track_filename="$cdj_use_name"
+    fi
+
     local filename_root="$(printf "%06.2f_%s" $cdj_current_bpm "${current_track_filename%.*}")"
     local target_dir
 
-    # before doing anything, check if it looks like this track is already in either target dir
-    for target_dir in $(echo "$cdj_target_dir" | tr ',' '\n'); do
-        if _cdj_does_target_exist_in_dir "$target_dir" "$current_track_filename"; then
-            echo "Found $current_track_filename in "$target_dir". Stopping now to avoid screwing things up."
-            return 1
-        fi
-    done
+    [ "$1" != "force" ] && {
+        # before doing anything, check if it looks like this track is already in either target dir
+        for target_dir in $(echo "$cdj_target_dir" | tr ',' '\n'); do
+            if _cdj_does_target_exist_in_dir "$target_dir" "$current_track_filename"; then
+                echo "Found $current_track_filename in "$target_dir". Stopping now to avoid screwing things up."
+                return 1
+            fi
+        done
+    }
 
     local next_split;
     i=0
@@ -117,14 +157,21 @@ function cdj_split_preview {
 function cdj_scrub {
     _cdj_ensure_current_track || return 1
     ! [ -z "$cdj_current_scrub" ] && cdj_current_scrub=$1
-    _cdj_preview_at $cdj_current_scrub $cdj_split_preview_length
+    local preview_length=$cdj_split_preview_length
+    ! [ -z "$2" ] && preview_length=$2
+    _cdj_preview_at $cdj_current_scrub $preview_length
+}
+
+function cdj_bpm_time {
+    cdj_bpm_time="$1"
+    echo "When tapping along to bpm, $cdj_bpm_time seconds will play"
 }
 
 function cdj_bpm {
     [ -z "$1" ] && {
-        echo "Tap along to 5 seconds at current scrub location $cdj_current_scrub..."
-        _cdj_preview_at $cdj_current_scrub 5 &
-        timeout 5 tapbpm
+        echo "Tap along to $cdj_bpm_time seconds at current scrub location $cdj_current_scrub..."
+        _cdj_preview_at $cdj_current_scrub $cdj_bpm_time &
+        timeout $cdj_bpm_time tapbpm
         echo "To set the tempo, do:"
         echo "     cdj_bpm tempo"
         return 0
